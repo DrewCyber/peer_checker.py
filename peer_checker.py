@@ -56,60 +56,61 @@ async def resolve(name):
 
     return addr
 
-async def isup(peer):
+async def isup(peer, semaphore):
     """Check if peer is up and measure latency"""
     peer["up"] = False
     peer["latency"] = None
     addr = await resolve(peer["uri"][1])
-    if addr:
-        match peer["uri"][0]:
-            case "wss":
-                url = f"wss://{peer['uri'][1]}:{peer['uri'][2]}"
-                start_time = datetime.now()
-                try:
-                    async with websockets.connect(url) as websocket:
-                        peer["latency"] = datetime.now() - start_time
-                        peer["up"] = True
-                except Exception as e:
-                    logging.debug("WSS connection error %s: %s", type(e), e)
-            case "ws":
-                url = f"ws://{addr}:{peer['uri'][2]}"
-                start_time = datetime.now()
-                try:
-                    async with websockets.connect(url) as websocket:
-                        peer["latency"] = datetime.now() - start_time
-                        peer["up"] = True
-                except Exception as e:
-                    logging.debug("WS connection error %s: %s", type(e), e)
-            case "quic":
-                configuration = QuicConfiguration(is_client=True)
-                configuration.verify_mode = False  # Equivalent to InsecureSkipVerify
-                configuration.timeout = 1
-                start_time = datetime.now()
-                try:
-                    #BUG: It takes 60 seconds to check dead peers with aioquic.asyncio.connect
-                    #There is no timeout parameter for aioquic.asyncio.connect
-                    #If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
-                    async def connect_and_check():
-                        async with aioquic.asyncio.connect(addr, peer["uri"][2], configuration=configuration) as quic_stream:
+    async with semaphore:
+        if addr:
+            match peer["uri"][0]:
+                case "wss":
+                    url = f"wss://{peer['uri'][1]}:{peer['uri'][2]}"
+                    start_time = datetime.now()
+                    try:
+                        async with websockets.connect(url) as websocket:
                             peer["latency"] = datetime.now() - start_time
                             peer["up"] = True
-                    await asyncio.wait_for(connect_and_check(), timeout=2)
-                except Exception as e:
-                    logging.debug("QUIC connection error %s: %s", type(e), e)
-            case _:
-                start_time = datetime.now()
-                try:
-                    reader, writer = await asyncio.wait_for(asyncio.open_connection(
-                            addr, peer["uri"][2]), 5)
-                    peer["latency"] = datetime.now() - start_time
-                    writer.close()
-                    await writer.wait_closed()
-                    peer["up"] = True
-                except Exception as e:
-                    logging.debug("Connection error %s: %s", type(e), e)
+                    except Exception as e:
+                        logging.debug("WSS connection error %s: %s", type(e), e)
+                case "ws":
+                    url = f"ws://{addr}:{peer['uri'][2]}"
+                    start_time = datetime.now()
+                    try:
+                        async with websockets.connect(url) as websocket:
+                            peer["latency"] = datetime.now() - start_time
+                            peer["up"] = True
+                    except Exception as e:
+                        logging.debug("WS connection error %s: %s", type(e), e)
+                case "quic":
+                    configuration = QuicConfiguration(is_client=True)
+                    configuration.verify_mode = False  # Equivalent to InsecureSkipVerify
+                    configuration.timeout = 1
+                    start_time = datetime.now()
+                    try:
+                        #BUG: It takes 60 seconds to check dead peers with aioquic.asyncio.connect
+                        #There is no timeout parameter for aioquic.asyncio.connect
+                        #If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
+                        async def connect_and_check():
+                            async with aioquic.asyncio.connect(addr, peer["uri"][2], configuration=configuration) as quic_stream:
+                                peer["latency"] = datetime.now() - start_time
+                                peer["up"] = True
+                        await asyncio.wait_for(connect_and_check(), timeout=61)
+                    except Exception as e:
+                        logging.debug("QUIC connection error %s: %s", type(e), e)
+                case _:
+                    start_time = datetime.now()
+                    try:
+                        reader, writer = await asyncio.wait_for(asyncio.open_connection(
+                                addr, peer["uri"][2]), 5)
+                        peer["latency"] = datetime.now() - start_time
+                        writer.close()
+                        await writer.wait_closed()
+                        peer["up"] = True
+                    except Exception as e:
+                        logging.debug("Connection error %s: %s", type(e), e)
 
-    return peer
+        return peer
 
 def print_results(results):
     """Output results"""
@@ -148,9 +149,9 @@ def print_results(results):
         for p in p_table:
             print(p[0].ljust(addr_w), p[2])
 
-async def main(peers):
-    """Main async function to check peers state"""
-    results = await asyncio.gather(*[isup(p) for p in peers])
+async def main(peers, max_concurrency):
+    semaphore = asyncio.Semaphore(max_concurrency)
+    results = await asyncio.gather(*[isup(p, semaphore) for p in peers])
     return results
 
 
@@ -176,6 +177,9 @@ if __name__ == "__main__":
                         action='store_false', default=None,
                         help="don't pull new peers data from git repository "
                              "on start")
+    parser.add_argument('-m', '--max_concurrency',
+                        action="store", type=int, default=10,
+                        help='maximum number of concurrent connections (default: 10)')
     parser.add_argument('--tcp', action='store_true', default=None,
                         help='show tcp peers')
     parser.add_argument('--tls', action='store_true', default=None,
@@ -195,6 +199,8 @@ if __name__ == "__main__":
         config.getboolean("show_dead", fallback=False)
     UPD_REPO = args.do_not_pull if args.do_not_pull is not None else \
         config.getboolean("update_repo", fallback=True)
+    MAX_CONCURRENCY = args.max_concurrency if args.max_concurrency is not None else \
+        config.getint("max_concurrency", fallback=10)
 
     peer_kind = ''
     if args.tcp is not None:
@@ -236,4 +242,4 @@ if __name__ == "__main__":
         sys.exit()
 
     print("\nReport date (UTC):", datetime.now(timezone.utc).strftime("%c"))
-    print_results(asyncio.run(main(peers)))
+    print_results(asyncio.run(main(peers,MAX_CONCURRENCY)))
