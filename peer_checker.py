@@ -8,7 +8,9 @@ import subprocess
 import configparser
 import argparse
 from datetime import datetime, timezone
-
+import websockets
+import aioquic.asyncio
+from aioquic.quic.configuration import QuicConfiguration
 
 get_loop = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") \
     else asyncio.get_event_loop
@@ -60,17 +62,52 @@ async def isup(peer):
     peer["latency"] = None
     addr = await resolve(peer["uri"][1])
     if addr:
-        start_time = datetime.now()
-
-        try:
-            reader, writer = await asyncio.wait_for(asyncio.open_connection(
-                    addr, peer["uri"][2]), 5)
-            peer["latency"] = datetime.now() - start_time
-            writer.close()
-            await writer.wait_closed()
-            peer["up"] = True
-        except Exception as e:
-            logging.debug("Connection error %s: %s", type(e), e)
+        match peer["uri"][0]:
+            case "wss":
+                url = f"wss://{peer['uri'][1]}:{peer['uri'][2]}"
+                start_time = datetime.now()
+                try:
+                    async with websockets.connect(url) as websocket:
+                        peer["latency"] = datetime.now() - start_time
+                        peer["up"] = True
+                except Exception as e:
+                    logging.debug("WSS connection error %s: %s", type(e), e)
+            case "ws":
+                url = f"ws://{addr}:{peer['uri'][2]}"
+                start_time = datetime.now()
+                try:
+                    async with websockets.connect(url) as websocket:
+                        peer["latency"] = datetime.now() - start_time
+                        peer["up"] = True
+                except Exception as e:
+                    logging.debug("WS connection error %s: %s", type(e), e)
+            case "quic":
+                configuration = QuicConfiguration(is_client=True)
+                configuration.verify_mode = False  # Equivalent to InsecureSkipVerify
+                configuration.timeout = 1
+                start_time = datetime.now()
+                try:
+                    #BUG: It takes 60 seconds to check dead peers with aioquic.asyncio.connect
+                    #There is no timeout parameter for aioquic.asyncio.connect
+                    #If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
+                    async def connect_and_check():
+                        async with aioquic.asyncio.connect(addr, peer["uri"][2], configuration=configuration) as quic_stream:
+                            peer["latency"] = datetime.now() - start_time
+                            peer["up"] = True
+                    await asyncio.wait_for(connect_and_check(), timeout=2)
+                except Exception as e:
+                    logging.debug("QUIC connection error %s: %s", type(e), e)
+            case _:
+                start_time = datetime.now()
+                try:
+                    reader, writer = await asyncio.wait_for(asyncio.open_connection(
+                            addr, peer["uri"][2]), 5)
+                    peer["latency"] = datetime.now() - start_time
+                    writer.close()
+                    await writer.wait_closed()
+                    peer["up"] = True
+                except Exception as e:
+                    logging.debug("Connection error %s: %s", type(e), e)
 
     return peer
 
@@ -143,6 +180,12 @@ if __name__ == "__main__":
                         help='show tcp peers')
     parser.add_argument('--tls', action='store_true', default=None,
                         help='show tls peers')
+    parser.add_argument('--quic', action='store_true', default=None,
+                        help='show quic peers')
+    parser.add_argument('--ws', action='store_true', default=None,
+                        help='show ws peers')
+    parser.add_argument('--wss', action='store_true', default=None,
+                        help='show wss peers')
     args = parser.parse_args()
 
     # command line args replace config options
@@ -153,16 +196,23 @@ if __name__ == "__main__":
     UPD_REPO = args.do_not_pull if args.do_not_pull is not None else \
         config.getboolean("update_repo", fallback=True)
 
-    if args.tcp == args.tls is None:
+    peer_kind = ''
+    if args.tcp is not None:
+        peer_kind += "tcp|"
+    if args.tls is not None:
+        peer_kind += "tls|"
+    if args.quic is not None:
+        peer_kind += "quic|"
+    if args.ws is not None:
+        peer_kind += "ws|"
+    if args.wss is not None:
+        peer_kind += "wss|"
+    if peer_kind == '':
         peer_kind = config.get("peer_kind")
-        if peer_kind not in ("tcp", "tls"):
-            peer_kind = "tcp|tls"
+        if peer_kind not in ("tcp", "tls", "quic", "ws", "wss"):
+            peer_kind = "tcp|tls|quic|ws|wss"
     else:
-        peer_kind = ''
-        if args.tcp is not None:
-            peer_kind = "tcp"
-        if args.tls is not None:
-            peer_kind += "|tls" if peer_kind else "tls"
+        peer_kind = peer_kind[:-1]
     PEER_REGEX = re.compile(rf"`({peer_kind})://([a-z0-9\.\-\:\[\]]+):([0-9]+)`")
 
     regions = args.regions if args.regions is not None else \
