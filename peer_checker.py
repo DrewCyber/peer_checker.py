@@ -7,7 +7,8 @@ import asyncio
 import subprocess
 import configparser
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
+
 
 get_loop = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") \
     else asyncio.get_event_loop
@@ -184,5 +185,5 @@ if __name__ == "__main__":
         print(f"Can't find peers in a directory: {DATA_DIR}")
         sys.exit()
 
-    print("\nReport date (UTC):", datetime.utcnow().strftime("%c"))
+    print("\nReport date (UTC):", datetime.now(timezone.utc).strftime("%c"))
     print_results(asyncio.run(main(peers)))
