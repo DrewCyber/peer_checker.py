@@ -184,7 +184,7 @@ if __name__ == "__main__":
                         help='maximum number of concurrent connections (default: 10)')
     parser.add_argument('-n', '--number',
                         action="store", type=int, default=None,
-                        help='number of peers to add (excluding extra ones)')
+                        help='number of peers to filter')
     parser.add_argument('--tcp', action='store_true', default=None,
                         help='show tcp peers')
     parser.add_argument('--tls', action='store_true', default=None,
