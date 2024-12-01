@@ -5,7 +5,7 @@ import sys
 import logging
 import asyncio
 import subprocess
-import configparser
+import shlex
 import argparse
 from datetime import datetime, timezone
 import websockets
@@ -13,6 +13,16 @@ import aioquic.asyncio
 from aioquic.quic.configuration import QuicConfiguration
 from dulwich import porcelain
 
+# Defaults
+DATA_DIR            = "public_peers"    # Path where data will be stored. It can be relative.
+REPO_URL            = "https://github.com/yggdrasil-network/public-peers.git"
+NUMBER              = ""                # The number of peers to filter
+UPDATE_REPO         = True              # Pull new data from git repository on start
+SHOW_DEAD           = False             # Show dead peers table
+REGIONS_LIST        = ""                # africa, asia, australia, europe, mena, north-america, other, south-america
+COUNTRIES_LIST      = ""                # List of countries to test peers from
+MAX_CONCURRENCY     = ""                # Maximum number of concurrent connections (default: 10)
+DEFAULT_PEER_KIND   = ""                # Peers types: tcp, tls, quic, ws, wss. Check all if empty
 
 get_loop = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") \
     else asyncio.get_event_loop
@@ -65,6 +75,7 @@ async def isup(peer, semaphore):
     addr = await resolve(peer["uri"][1])
     async with semaphore:
         if addr:
+            print (f"Checking {peer['uri'][1]}:{peer['uri'][2]}")
             proto = peer["uri"][0]
             if proto == "wss":
                 url = f"wss://{peer['uri'][1]}:{peer['uri'][2]}"
@@ -138,7 +149,7 @@ def print_results(results):
     p_table, addr_w = prepare_table(filter(lambda p: p["up"], results))
     print("URI".ljust(addr_w), "Latency (ms)", "Location")
     print("---".ljust(addr_w), "------------", "--------")
-    for p in sorted(p_table, key=lambda x: x[1], reverse=True)[:LIMIT]:
+    for p in sorted(p_table, key=lambda x: x[1], reverse=True)[-NUMBER:]:
         print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
 
     if SHOW_DEAD:
@@ -158,11 +169,6 @@ async def main(peers, max_concurrency):
 
 
 if __name__ == "__main__":
-    # load config file
-    cfg = configparser.ConfigParser()
-    cfg.read("peer_checker.conf")
-    config = cfg["CONFIG"]
-
     # get arguments from command line
     parser = argparse.ArgumentParser()
     parser.add_argument('data_dir', nargs='?', type=str,
@@ -180,7 +186,7 @@ if __name__ == "__main__":
                         help="don't pull new peers data from git repository "
                              "on start")
     parser.add_argument('-m', '--max_concurrency',
-                        action="store", type=int, default=10,
+                        action="store", type=int, default=None,
                         help='maximum number of concurrent connections (default: 10)')
     parser.add_argument('-n', '--number',
                         action="store", type=int, default=None,
@@ -198,48 +204,45 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # command line args replace config options
-    DATA_DIR = args.data_dir if args.data_dir is not None else \
-        config.get("data_dir", fallback="public_peers")
-    SHOW_DEAD = args.show_dead if args.show_dead is not None else \
-        config.getboolean("show_dead", fallback=False)
-    UPD_REPO = args.do_not_pull if args.do_not_pull is not None else \
-        config.getboolean("update_repo", fallback=True)
-    MAX_CONCURRENCY = args.max_concurrency if args.max_concurrency is not None else \
-        config.getint("max_concurrency", fallback=10)
-    LIMIT = args.number if args.number is not None else \
-        config.get("number", fallback=None)
-    LIMIT = None if LIMIT == '' else int(LIMIT)
+    DATA_DIR = args.data_dir if args.data_dir is not None else DATA_DIR
+    SHOW_DEAD = args.show_dead if args.show_dead is not None else bool(SHOW_DEAD)
+    UPDATE_REPO = args.do_not_pull if args.do_not_pull is not None else bool(UPDATE_REPO)
+    MAX_CONCURRENCY = args.max_concurrency or (int(MAX_CONCURRENCY) if MAX_CONCURRENCY.strip() else 10)
+    NUMBER = args.number or (int(NUMBER) if NUMBER.strip() else None)
 
     peer_kind = ''
+    # Get values from defaults config
+    if DEFAULT_PEER_KIND != "":
+        kinds = shlex.split(DEFAULT_PEER_KIND.replace(",", " "))
+        peer_kind = "|".join([kind for kind in kinds])
+    # Override kind from command line
+    cli_peer_kind = ''
     if args.tcp is not None:
-        peer_kind += "tcp|"
+        cli_peer_kind += "tcp|"
     if args.tls is not None:
-        peer_kind += "tls|"
+        cli_peer_kind += "tls|"
     if args.quic is not None:
-        peer_kind += "quic|"
+        cli_peer_kind += "quic|"
     if args.ws is not None:
-        peer_kind += "ws|"
+        cli_peer_kind += "ws|"
     if args.wss is not None:
-        peer_kind += "wss|"
-    if peer_kind == '':
-        peer_kind = config.get("peer_kind")
-        if peer_kind not in ("tcp", "tls", "quic", "ws", "wss"):
-            peer_kind = "tcp|tls|quic|ws|wss"
-    else:
-        peer_kind = peer_kind[:-1]
-    PEER_REGEX = re.compile(rf"`({peer_kind})://([a-z0-9\.\-\:\[\]]+):([0-9]+)`")
+        cli_peer_kind += "wss|"
+    if cli_peer_kind != "":
+        peer_kind = cli_peer_kind[:-1]
+    # Check all kinds if none specified
+    if peer_kind == "":
+        peer_kind = "tcp|tls|quic|ws|wss"
 
-    regions = args.regions if args.regions is not None else \
-        config.get("regions_list", fallback='').split()
-    countries = args.countries if args.countries is not None else \
-        config.get("countries_list", fallback='').split()
+    PEER_REGEX = re.compile(rf"`({peer_kind})://([a-z0-9\.\-\:\[\]]+):([0-9]+)`")
+    regions = args.regions if args.regions is not None else shlex.split(REGIONS_LIST.replace(",", " "))
+    countries = args.countries if args.countries is not None else shlex.split(COUNTRIES_LIST.replace(",", " "))
 
     # get or update public peers data from git
     if not os.path.exists(DATA_DIR):
-        porcelain.clone(config.get("repo_url"), DATA_DIR, depth=1)
-    elif UPD_REPO and os.path.exists(os.path.join(DATA_DIR, ".git")):
+        porcelain.clone(REPO_URL, DATA_DIR, depth=1)
+    elif UPDATE_REPO and os.path.exists(os.path.join(DATA_DIR, ".git")):
         print("Update public peers repository:")
-        porcelain.pull(DATA_DIR, config.get("repo_url"))
+        porcelain.pull(DATA_DIR, REPO_URL)
 
     # parse and check peers
     try:
@@ -249,4 +252,5 @@ if __name__ == "__main__":
         sys.exit()
 
     print("\nReport date (UTC):", datetime.now(timezone.utc).strftime("%c"))
+    print ("Total peers count:", len(peers))
     print_results(asyncio.run(main(peers,MAX_CONCURRENCY)))
