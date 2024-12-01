@@ -22,6 +22,7 @@ SHOW_DEAD           = False             # Show dead peers table
 REGIONS_LIST        = ""                # africa, asia, australia, europe, mena, north-america, other, south-america
 COUNTRIES_LIST      = ""                # List of countries to test peers from
 MAX_CONCURRENCY     = ""                # Maximum number of concurrent connections (default: 10)
+QUIET               = False             # Print only peers uri (for yggdrasil.conf)
 DEFAULT_PEER_KIND   = ""                # Peers types: tcp, tls, quic, ws, wss. Check all if empty
 
 get_loop = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") \
@@ -53,6 +54,10 @@ def get_peers(regions, countries):
                             {"uri": p, "region": region, "country": country})
     return peers
 
+def qprint(*args, **kwargs):
+    if not QUIET:
+        print(*args, **kwargs)
+
 async def resolve(name):
     """Get IP address or none to skip scan"""
     # handle clear ipv6 address
@@ -75,7 +80,7 @@ async def isup(peer, semaphore):
     addr = await resolve(peer["uri"][1])
     async with semaphore:
         if addr:
-            print (f"Checking {peer['uri'][1]}:{peer['uri'][2]}")
+            qprint (f"Checking {peer['uri'][1]}:{peer['uri'][2]}")
             proto = peer["uri"][0]
             if proto == "wss":
                 url = f"wss://{peer['uri'][1]}:{peer['uri'][2]}"
@@ -125,7 +130,7 @@ async def isup(peer, semaphore):
 
         return peer
 
-def print_results(results):
+def print_results(results, limit):
     """Output results"""
     def prepare_table(peer_list_iter):
         """Prepare peers table for print"""
@@ -143,24 +148,26 @@ def print_results(results):
                 addr_width = len(addr)
         return peers_table, addr_width
 
-    print("\n=================================")
-    print(" ALIVE PEERS sorted by latency (highest to lowest):")
-    print("=================================")
+    qprint("\n=================================")
+    qprint(" ALIVE PEERS sorted by latency (highest to lowest):")
+    qprint("=================================")
     p_table, addr_w = prepare_table(filter(lambda p: p["up"], results))
-    print("URI".ljust(addr_w), "Latency (ms)", "Location")
-    print("---".ljust(addr_w), "------------", "--------")
-    for p in sorted(p_table, key=lambda x: x[1], reverse=True)[-NUMBER:]:
-        print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
+    qprint("URI".ljust(addr_w), "Latency (ms)", "Location")
+    qprint("---".ljust(addr_w), "------------", "--------")
+    if limit is not None:
+        limit = -limit  # reverce limit with reverse order
+    for p in sorted(p_table, key=lambda x: x[1], reverse=True)[limit:]:
+        print(p[0]) if QUIET else print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
 
     if SHOW_DEAD:
-        print("\n============")
-        print(" DEAD PEERS:")
-        print("============")
+        qprint("\n============")
+        qprint(" DEAD PEERS:")
+        qprint("============")
         p_table, addr_w = prepare_table(filter(lambda p: not p["up"], results))
-        print("URI".ljust(addr_w), "Location")
-        print("---".ljust(addr_w), "--------")
+        qprint("URI".ljust(addr_w), "Location")
+        qprint("---".ljust(addr_w), "--------")
         for p in p_table:
-            print(p[0].ljust(addr_w), p[2])
+            qprint(p[0].ljust(addr_w), p[2])
 
 async def main(peers, max_concurrency):
     semaphore = asyncio.Semaphore(max_concurrency)
@@ -191,6 +198,8 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--number',
                         action="store", type=int, default=None,
                         help='number of peers to filter')
+    parser.add_argument('-q', '--quiet', action='store_true', default=None,
+                        help='print only peers uri (for yggdrasil.conf)')
     parser.add_argument('--tcp', action='store_true', default=None,
                         help='show tcp peers')
     parser.add_argument('--tls', action='store_true', default=None,
@@ -209,6 +218,7 @@ if __name__ == "__main__":
     UPDATE_REPO = args.do_not_pull if args.do_not_pull is not None else bool(UPDATE_REPO)
     MAX_CONCURRENCY = args.max_concurrency or (int(MAX_CONCURRENCY) if MAX_CONCURRENCY.strip() else 10)
     NUMBER = args.number or (int(NUMBER) if NUMBER.strip() else None)
+    QUIET = args.quiet if args.quiet is not None else bool(QUIET)
 
     peer_kind = ''
     # Get values from defaults config
@@ -251,6 +261,6 @@ if __name__ == "__main__":
         print(f"Can't find peers in a directory: {DATA_DIR}")
         sys.exit()
 
-    print("\nReport date (UTC):", datetime.now(timezone.utc).strftime("%c"))
-    print ("Total peers count:", len(peers))
-    print_results(asyncio.run(main(peers,MAX_CONCURRENCY)))
+    qprint("\nReport date (UTC):", datetime.now(timezone.utc).strftime("%c"))
+    qprint ("Total peers count:", len(peers))
+    print_results(asyncio.run(main(peers,MAX_CONCURRENCY)), NUMBER)
