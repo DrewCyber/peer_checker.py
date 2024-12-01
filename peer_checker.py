@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import websockets
 import aioquic.asyncio
 from aioquic.quic.configuration import QuicConfiguration
+from dulwich import porcelain
+
 
 get_loop = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") \
     else asyncio.get_event_loop
@@ -234,11 +236,10 @@ if __name__ == "__main__":
 
     # get or update public peers data from git
     if not os.path.exists(DATA_DIR):
-        subprocess.call(
-            ["git", "clone", "--depth=1", config.get("repo_url"), DATA_DIR])
+        porcelain.clone(config.get("repo_url"), DATA_DIR, depth=1)
     elif UPD_REPO and os.path.exists(os.path.join(DATA_DIR, ".git")):
         print("Update public peers repository:")
-        subprocess.call(["git", "-C", DATA_DIR, "pull"])
+        porcelain.pull(DATA_DIR, config.get("repo_url"))
 
     # parse and check peers
     try:
