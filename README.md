@@ -1,5 +1,7 @@
 ### Yggdrasil peer checker / peer_checker.py
-No git binnary required.
+No git binnary is required.  
+No cloned ["public_peers"](https://github.com/yggdrasil-network/public-peers) repository is required.  
+Only 1 python script with config inside.  
 
 ### Requirements
 Linux, python 3.9+ (tested on 3.9.19)

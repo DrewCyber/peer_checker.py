@@ -4,7 +4,6 @@ import os
 import sys
 import logging
 import json
-from datetime import datetime
 
 PEER_REGEX = re.compile(r"`(tcp|tls)://([a-z0-9\.\-\:\[\]]+):([0-9]+)`")
 
@@ -50,5 +49,4 @@ if __name__ == "__main__":
         print_usage()
         sys.exit()
 
-    result = {"date":datetime.utcnow().strftime("%c"), "data":peers}
     print(json.dumps(peers, sort_keys=True, indent=4))

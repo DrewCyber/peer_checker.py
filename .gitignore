@@ -1,3 +1,4 @@
-/public-peers/
-/virtualenv/
-/venv/
+public_peers/
+public-peers/
+virtualenv/
+venv/
