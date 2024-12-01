@@ -156,8 +156,15 @@ def print_results(results, limit):
     qprint("---".ljust(addr_w), "------------", "--------")
     if limit is not None:
         limit = -limit  # reverce limit with reverse order
-    for p in sorted(p_table, key=lambda x: x[1], reverse=True)[limit:]:
-        print(p[0]) if QUIET else print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
+    for i,p in enumerate(sorted(p_table, key=lambda x: x[1], reverse=True)[limit:]):
+        if QUIET:
+            # Print only URIs
+            # Add a comma only if it's not the last element
+            table_len = len(p_table) - 1 if limit is None else -limit - 1
+            print('"' + p[0] + '"' + ("," if i < table_len else ""))
+        else:
+            # Print URI, latency and location
+            print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
 
     if SHOW_DEAD:
         qprint("\n============")
