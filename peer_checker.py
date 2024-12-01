@@ -131,12 +131,12 @@ def print_results(results):
         return peers_table, addr_width
 
     print("\n=================================")
-    print(" ALIVE PEERS (sorted by latency):")
+    print(" ALIVE PEERS sorted by latency (highest to lowest):")
     print("=================================")
     p_table, addr_w = prepare_table(filter(lambda p: p["up"], results))
     print("URI".ljust(addr_w), "Latency (ms)", "Location")
     print("---".ljust(addr_w), "------------", "--------")
-    for p in sorted(p_table, key=lambda x: x[1]):
+    for p in sorted(p_table, key=lambda x: x[1], reverse=True)[:LIMIT]:
         print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
 
     if SHOW_DEAD:
@@ -180,6 +180,9 @@ if __name__ == "__main__":
     parser.add_argument('-m', '--max_concurrency',
                         action="store", type=int, default=10,
                         help='maximum number of concurrent connections (default: 10)')
+    parser.add_argument('-n', '--number',
+                        action="store", type=int, default=None,
+                        help='number of peers to add (excluding extra ones)')
     parser.add_argument('--tcp', action='store_true', default=None,
                         help='show tcp peers')
     parser.add_argument('--tls', action='store_true', default=None,
@@ -201,6 +204,9 @@ if __name__ == "__main__":
         config.getboolean("update_repo", fallback=True)
     MAX_CONCURRENCY = args.max_concurrency if args.max_concurrency is not None else \
         config.getint("max_concurrency", fallback=10)
+    LIMIT = args.number if args.number is not None else \
+        config.get("number", fallback=None)
+    LIMIT = None if LIMIT == '' else int(LIMIT)
 
     peer_kind = ''
     if args.tcp is not None:
