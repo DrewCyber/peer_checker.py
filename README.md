@@ -9,8 +9,10 @@ Linux, python 3.9+ (tested on 3.9.19)
 
 ### Installation
 ```
+python3 -m ensurepip
 pip3 install aioquic dulwich websockets
 curl -L https://raw.githubusercontent.com/DrewCyber/peer_checker.py/refs/heads/master/peer_checker.py > peer_checker.py
+chmod a+x peer_checker.py
 ```
 
 ### Usage
