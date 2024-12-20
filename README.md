@@ -5,7 +5,8 @@ No cloned ["public_peers"](https://github.com/yggdrasil-network/public-peers) re
 Only 1 python script with config inside.  
 
 ### Requirements
-Linux, python 3.9+ (tested on 3.9.19)
+Linux, python 3.9+ (tested on 3.9.19)  
+Tested on Windows 10 x64, version 21H2 pro (with auto-py-to-exe)  
 
 ### Installation
 ```
@@ -44,7 +45,13 @@ options:
 ```
 
 ### Known issue
-
 BUG: It takes 60 seconds to check QUIC dead peers with aioquic.asyncio.connect  
 There is no timeout parameter for aioquic.asyncio.connect  
 If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
+
+### TODO:
+ - Need to show key if it's required for the peer connection.
+```
+tcp://ip6.fvm.mywire.org:8080?key=000000000143db657d1d6f80b5066dd109a4cb31f7dc6cb5d56050fffb014217
+```
+ - Need to show only 1 peer per IP. I.e. hide same peers with different protocols/ports.

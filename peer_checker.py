@@ -259,7 +259,7 @@ if __name__ == "__main__":
         porcelain.clone(REPO_URL, DATA_DIR, depth=1)
     elif UPDATE_REPO and os.path.exists(os.path.join(DATA_DIR, ".git")):
         print("Update public peers repository:")
-        porcelain.pull(DATA_DIR, REPO_URL)
+        porcelain.pull(DATA_DIR, REPO_URL, fast_forward=True, force=True)
 
     # parse and check peers
     try:
