@@ -7,7 +7,9 @@ import asyncio
 import subprocess
 import shlex
 import argparse
-from datetime import datetime, timezone
+import requests
+import ipaddress
+from datetime import datetime, timezone, timedelta
 import websockets
 import aioquic.asyncio
 from aioquic.quic.configuration import QuicConfiguration
@@ -25,6 +27,8 @@ COUNTRIES_LIST      = ""                # List of countries to test peers from
 MAX_CONCURRENCY     = ""                # Maximum number of concurrent connections (default: 10)
 QUIET               = False             # Print only peers uri (for yggdrasil.conf)
 DEFAULT_PEER_KIND   = ""                # Peers types: tcp, tls, quic, ws, wss. Check all if empty
+CLOUDFLARE_PENALTY  = 100               # Cloudflare penalty in ms
+CLOUDFLARE_IPS_LIST = "peers_checker_cloudflare.txt" # List of cloudflare ips
 
 get_loop = asyncio.get_running_loop if hasattr(asyncio, "get_running_loop") \
     else asyncio.get_event_loop
@@ -74,6 +78,12 @@ async def resolve(name):
 
     return addr
 
+def is_cloudflare_ip(ip):
+    for cidr in CLOUDFLARE_IPS:
+        if ipaddress.ip_address(ip) in ipaddress.ip_network(cidr):
+            return True
+    return False
+
 async def isup(peer, semaphore):
     """Check if peer is up and measure latency"""
     peer["up"] = False
@@ -81,6 +91,7 @@ async def isup(peer, semaphore):
     peer["ip"] = await resolve(peer["uri"][1])
     async with semaphore:
         if peer["ip"]:
+            cloudflare_penalty = timedelta(milliseconds=CLOUDFLARE_PENALTY) if is_cloudflare_ip(peer["ip"]) else timedelta(microseconds=0)
             qprint (f"Checking {peer['uri'][1]}:{peer['uri'][2]}")
             proto = peer["uri"][0]
             if proto == "wss":
@@ -88,7 +99,7 @@ async def isup(peer, semaphore):
                 start_time = datetime.now()
                 try:
                     async with websockets.connect(url) as websocket:
-                        peer["latency"] = datetime.now() - start_time
+                        peer["latency"] = datetime.now() - start_time + cloudflare_penalty
                         peer["up"] = True
                 except Exception as e:
                     logging.debug("WSS connection error %s: %s", type(e), e)
@@ -97,7 +108,7 @@ async def isup(peer, semaphore):
                 start_time = datetime.now()
                 try:
                     async with websockets.connect(url) as websocket:
-                        peer["latency"] = datetime.now() - start_time
+                        peer["latency"] = datetime.now() - start_time + cloudflare_penalty
                         peer["up"] = True
                 except Exception as e:
                     logging.debug("WS connection error %s: %s", type(e), e)
@@ -112,7 +123,7 @@ async def isup(peer, semaphore):
                     #If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
                     async def connect_and_check():
                         async with aioquic.asyncio.connect(peer["ip"], peer["uri"][2], configuration=configuration) as quic_stream:
-                            peer["latency"] = datetime.now() - start_time
+                            peer["latency"] = datetime.now() - start_time + cloudflare_penalty
                             peer["up"] = True
                     await asyncio.wait_for(connect_and_check(), timeout=61)
                 except Exception as e:
@@ -122,7 +133,7 @@ async def isup(peer, semaphore):
                 try:
                     reader, writer = await asyncio.wait_for(asyncio.open_connection(
                             peer["ip"], peer["uri"][2]), 5)
-                    peer["latency"] = datetime.now() - start_time
+                    peer["latency"] = datetime.now() - start_time + cloudflare_penalty
                     writer.close()
                     await writer.wait_closed()
                     peer["up"] = True
@@ -233,6 +244,9 @@ if __name__ == "__main__":
     parser.add_argument('-n', '--number',
                         action="store", type=int, default=None,
                         help='number of peers to filter')
+    parser.add_argument('-f', '--flare_penalty',
+                        action="store", type=int, default=None,
+                        help='penalty (ms) for ClaudFlare peers (default: 100)')
     parser.add_argument('-q', '--quiet', action='store_true', default=None,
                         help='print only peers uri (for yggdrasil.conf)')
     parser.add_argument('--tcp', action='store_true', default=None,
@@ -253,6 +267,7 @@ if __name__ == "__main__":
     UPDATE_REPO = args.do_not_pull if args.do_not_pull is not None else bool(UPDATE_REPO)
     MAX_CONCURRENCY = args.max_concurrency or (int(MAX_CONCURRENCY) if MAX_CONCURRENCY.strip() else 10)
     NUMBER = args.number or (int(NUMBER) if NUMBER.strip() else None)
+    CLOUDFLARE_PENALTY = args.flare_penalty if args.flare_penalty is not None else int(CLOUDFLARE_PENALTY)
     UNIQUE = args.unique if args.unique is not None else bool(UNIQUE)
     QUIET = args.quiet if args.quiet is not None else bool(QUIET)
 
@@ -290,6 +305,21 @@ if __name__ == "__main__":
         qprint("Update public peers repository:")
         porcelain.pull(DATA_DIR, REPO_URL, fast_forward=True, force=True)
 
+    # get cloudflare subnets
+    if os.path.exists(CLOUDFLARE_IPS_LIST):
+        with open(CLOUDFLARE_IPS_LIST) as f:
+            CLOUDFLARE_IPS = f.read().splitlines()
+    else:
+        try:
+            r = requests.get("https://www.cloudflare.com/ips-v4/", timeout=10)
+            r.raise_for_status()
+            CLOUDFLARE_IPS = r.text.splitlines()
+            with open(CLOUDFLARE_IPS_LIST, "w") as f:
+                f.write("\n".join(CLOUDFLARE_IPS))
+        except Exception as e:
+            qprint(f"Error fetching Cloudflare IPs: {e}")
+            CLOUDFLARE_IPS = []  # Fallback to an empty list
+    
     # parse and check peers
     try:
         peers = get_peers(regions, countries)

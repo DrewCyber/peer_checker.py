@@ -18,15 +18,16 @@ eval "$(pyenv init -)"
   
 ```
 python3 -m ensurepip
-pip3 install aioquic dulwich websockets
+pip3 install aioquic dulwich requests websockets
 curl -L https://raw.githubusercontent.com/DrewCyber/peer_checker.py/refs/heads/master/peer_checker.py > peer_checker.py
 chmod a+x peer_checker.py
 ```
 
 ### Usage
 ```
-usage: peer_checker.py [-h] [-r REGIONS [REGIONS ...]] [-c COUNTRIES [COUNTRIES ...]] [-d] [-p] [-m MAX_CONCURRENCY] [-u] [-n NUMBER] [-q] [--tcp]
-                       [--tls] [--quic] [--ws] [--wss]
+usage: peer_checker.py [-h] [-r REGIONS [REGIONS ...]] [-c COUNTRIES [COUNTRIES ...]] [-d] [-p]
+                       [-m MAX_CONCURRENCY] [-u] [-n NUMBER] [-f FLARE_PENALTY] [-q] [--tcp] [--tls]
+                       [--quic] [--ws] [--wss]
                        [data_dir]
 
 positional arguments:
@@ -45,6 +46,8 @@ options:
   -u, --unique          show only best peer per ip address
   -n NUMBER, --number NUMBER
                         number of peers to filter
+  -f FLARE_PENALTY, --flare_penalty FLARE_PENALTY
+                        penalty (ms) for ClaudFlare peers (default: 100)
   -q, --quiet           print only peers uri (for yggdrasil.conf)
   --tcp                 show tcp peers
   --tls                 show tls peers
@@ -53,13 +56,16 @@ options:
   --wss                 show wss peers
 ```
 
+### CloudFlare Spectrum penalty
+We can't determine correct latency for the CloudFlare Spectrum peers. Usually they have low latency for the connection (5-15ms), but in yggdrasil it show as ordinary peer with medium-high RTT latency.  
+I decided not to exclude that peers at all and just lower their position in output with added penalty in ms (-f 100).
+
 ### Known issue
 BUG: It takes 60 seconds to check QUIC dead peers with aioquic.asyncio.connect  
 There is no timeout parameter for aioquic.asyncio.connect  
 If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
 
 ### TODO:
- - Need to ignore/handle cloudflare ips (https://www.cloudflare.com/ips-v4/#)
  - Need to show key if it's required for the peer connection.
 ```
 tcp://ip6.fvm.mywire.org:8080?key=000000000143db657d1d6f80b5066dd109a4cb31f7dc6cb5d56050fffb014217

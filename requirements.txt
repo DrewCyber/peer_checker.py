@@ -1,3 +1,4 @@
 aioquic==1.2.0
 dulwich==0.22.6
 websockets==14.1
+requests==2.32.3

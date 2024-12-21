@@ -2,3 +2,4 @@ public_peers/
 public-peers/
 virtualenv/
 venv/
+peers_checker_cloudflare.txt
