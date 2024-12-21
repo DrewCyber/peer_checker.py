@@ -196,9 +196,7 @@ def print_results(results, limit):
         # p_table: Addr, latency, location, ip
         if QUIET:
             # Print only URIs
-            # Add a comma only if it's not the last element
-            table_len = len(p_table) - 1 if limit is None else -limit - 1
-            print('"' + p[0] + '"' + ("," if i < table_len else ""))
+            print(p[0])
         else:
             # Print URI, latency and location
             print(p[0].ljust(addr_w), repr(p[1]).ljust(12), p[2])
