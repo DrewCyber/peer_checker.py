@@ -17,6 +17,7 @@ from dulwich import porcelain
 DATA_DIR            = "public_peers"    # Path where data will be stored. It can be relative.
 REPO_URL            = "https://github.com/yggdrasil-network/public-peers.git"
 NUMBER              = ""                # The number of peers to filter
+UNIQUE              = False             # Show only best peer per ip
 UPDATE_REPO         = True              # Pull new data from git repository on start
 SHOW_DEAD           = False             # Show dead peers table
 REGIONS_LIST        = ""                # africa, asia, australia, europe, mena, north-america, other, south-america
@@ -77,9 +78,9 @@ async def isup(peer, semaphore):
     """Check if peer is up and measure latency"""
     peer["up"] = False
     peer["latency"] = None
-    addr = await resolve(peer["uri"][1])
+    peer["ip"] = await resolve(peer["uri"][1])
     async with semaphore:
-        if addr:
+        if peer["ip"]:
             qprint (f"Checking {peer['uri'][1]}:{peer['uri'][2]}")
             proto = peer["uri"][0]
             if proto == "wss":
@@ -92,7 +93,7 @@ async def isup(peer, semaphore):
                 except Exception as e:
                     logging.debug("WSS connection error %s: %s", type(e), e)
             elif proto == "ws":
-                url = f"ws://{addr}:{peer['uri'][2]}"
+                url = f"ws://{peer['ip']}:{peer['uri'][2]}"
                 start_time = datetime.now()
                 try:
                     async with websockets.connect(url) as websocket:
@@ -110,7 +111,7 @@ async def isup(peer, semaphore):
                     #There is no timeout parameter for aioquic.asyncio.connect
                     #If we use asyncio.wait_for as a timeout, we will get "ERROR:asyncio:Future exception was never retrieved"
                     async def connect_and_check():
-                        async with aioquic.asyncio.connect(addr, peer["uri"][2], configuration=configuration) as quic_stream:
+                        async with aioquic.asyncio.connect(peer["ip"], peer["uri"][2], configuration=configuration) as quic_stream:
                             peer["latency"] = datetime.now() - start_time
                             peer["up"] = True
                     await asyncio.wait_for(connect_and_check(), timeout=61)
@@ -120,7 +121,7 @@ async def isup(peer, semaphore):
                 start_time = datetime.now()
                 try:
                     reader, writer = await asyncio.wait_for(asyncio.open_connection(
-                            addr, peer["uri"][2]), 5)
+                            peer["ip"], peer["uri"][2]), 5)
                     peer["latency"] = datetime.now() - start_time
                     writer.close()
                     await writer.wait_closed()
@@ -140,23 +141,48 @@ def print_results(results, limit):
             addr = "{}://{}:{}".format(*p["uri"])
             latency = None
             if p["latency"] is not None:
-                latency = round(p["latency"].total_seconds() * 1000, 3)
+                latency = round(p["latency"].total_seconds() * 1000, 3) 
             place = "{}/{}".format(p["region"], p["country"])
-            peers_table.append((addr, latency, place))
+            peers_table.append((addr, latency, place, p["ip"]))
             # store max addr width
             if len(addr) > addr_width:
                 addr_width = len(addr)
         return peers_table, addr_width
+    
+    # Extract the distinct ips with lowest latency from peer_list
+    def distinct_ips(peer_list):
+        # Create a dictionary to store the lowest latency for each IP
+        lowest_latency_peers = {}
+        for peer in peer_list:
+            ip = peer['ip']
+            if ip not in lowest_latency_peers or peer['latency'] < lowest_latency_peers[ip]['latency']:
+                lowest_latency_peers[ip] = peer
+        filtered_peer_list = list(filter(lambda x: x == lowest_latency_peers[x['ip']], peer_list))
+        return filtered_peer_list
+    
+    # Filter peers by up status
+    processed_results = list(filter(lambda p: p["up"], results))
+
+    # Filter peers with distinct ip address by latency
+    if UNIQUE:
+        processed_results = distinct_ips(processed_results)
+
+    # Sort peers by latency in reverse order
+    processed_results = list(sorted(processed_results, key=lambda p: p["latency"], reverse=True))
+
+    p_table, addr_w = prepare_table(processed_results)
 
     qprint("\n=================================")
     qprint(" ALIVE PEERS sorted by latency (highest to lowest):")
     qprint("=================================")
-    p_table, addr_w = prepare_table(filter(lambda p: p["up"], results))
     qprint("URI".ljust(addr_w), "Latency (ms)", "Location")
     qprint("---".ljust(addr_w), "------------", "--------")
+
     if limit is not None:
         limit = -limit  # reverce limit with reverse order
-    for i,p in enumerate(sorted(p_table, key=lambda x: x[1], reverse=True)[limit:]):
+    # Print table up to limit
+    for i,p in enumerate(p_table[limit:]):
+        # p_table: Addr, latency, location, ip
         if QUIET:
             # Print only URIs
             # Add a comma only if it's not the last element
@@ -202,6 +228,8 @@ if __name__ == "__main__":
     parser.add_argument('-m', '--max_concurrency',
                         action="store", type=int, default=None,
                         help='maximum number of concurrent connections (default: 10)')
+    parser.add_argument('-u', '--unique', action='store_true', default=None,
+                        help='show only best peer per ip address')
     parser.add_argument('-n', '--number',
                         action="store", type=int, default=None,
                         help='number of peers to filter')
@@ -225,6 +253,7 @@ if __name__ == "__main__":
     UPDATE_REPO = args.do_not_pull if args.do_not_pull is not None else bool(UPDATE_REPO)
     MAX_CONCURRENCY = args.max_concurrency or (int(MAX_CONCURRENCY) if MAX_CONCURRENCY.strip() else 10)
     NUMBER = args.number or (int(NUMBER) if NUMBER.strip() else None)
+    UNIQUE = args.unique if args.unique is not None else bool(UNIQUE)
     QUIET = args.quiet if args.quiet is not None else bool(QUIET)
 
     peer_kind = ''
@@ -258,7 +287,7 @@ if __name__ == "__main__":
     if not os.path.exists(DATA_DIR):
         porcelain.clone(REPO_URL, DATA_DIR, depth=1)
     elif UPDATE_REPO and os.path.exists(os.path.join(DATA_DIR, ".git")):
-        print("Update public peers repository:")
+        qprint("Update public peers repository:")
         porcelain.pull(DATA_DIR, REPO_URL, fast_forward=True, force=True)
 
     # parse and check peers
