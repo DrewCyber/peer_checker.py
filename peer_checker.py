@@ -14,6 +14,7 @@ import websockets
 import aioquic.asyncio
 from aioquic.quic.configuration import QuicConfiguration
 from dulwich import porcelain
+import shutil
 
 # Defaults
 DATA_DIR            = "public_peers"    # Path where data will be stored. It can be relative.
@@ -301,7 +302,14 @@ if __name__ == "__main__":
         porcelain.clone(REPO_URL, DATA_DIR, depth=1)
     elif UPDATE_REPO and os.path.exists(os.path.join(DATA_DIR, ".git")):
         qprint("Update public peers repository:")
-        porcelain.pull(DATA_DIR, REPO_URL, fast_forward=True, force=True)
+        try:
+            porcelain.pull(DATA_DIR, REPO_URL, fast_forward=True, force=True)  #https://github.com/jelmer/dulwich/issues/813
+        except Exception as e:
+            qprint(f"Error updating public peers repository: {e}")
+            qprint("https://github.com/jelmer/dulwich/issues/813")
+            qprint("Force recloning public peers repository:")
+            shutil.rmtree(DATA_DIR)
+            porcelain.clone(REPO_URL, DATA_DIR, depth=1)
 
     # get cloudflare subnets
     if os.path.exists(CLOUDFLARE_IPS_LIST):
